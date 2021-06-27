@@ -9,7 +9,7 @@ def main():
     if len(sys.argv) == 2:
         filtro = sys.argv[1]
     else: 
-        print(sys.argv[0] + " <Filtro>")
+        print(sys.argv[0] + " <Filter>")
         sys.exit(1)
     
     try:
@@ -17,11 +17,26 @@ def main():
     except socket.error:
         print('Socket could not be created.')
         sys.exit(1)
+    
 
     while True:
         raw_data, addr = conn.recvfrom(65536)
-        destination_mac, source_mac, ethernet_protocol, data = unpackEthernetFrame(raw_data)
+        ethernet_protocol = ""
+        IpHeader = struct.unpack("!6s6sH",raw_data[0:14])
+        destination_mac = binascii.hexlify(IpHeader[0]) 
+        source_mac = binascii.hexlify(IpHeader[1]) 
+        protoType = IpHeader[2] 
+        next_protocol = hex(protoType) 
 
+        #Check the protocol type
+        if (next_protocol == '0x800'): 
+            ethernet_protocol = 'IPV4'
+        elif (next_protocol == '0x86dd'): 
+            ethernet_protocol = 'IPV6'
+
+        data = raw_data[14:]
+
+        
         if (ethernet_protocol == 'IPV6'):
             new_packet, next_protocol = ipv6Header(data)
 
@@ -75,11 +90,20 @@ def main():
                 print(' ')
 
         elif (ethernet_protocol == 'IPV4'):
-            (version, header_length, ttl, protocol, source, target, data) = unpackIPv4Packet(data)
+            
+            version_header_len = data[0]
+            version = version_header_len >> 4
+            header_length = (version_header_len & 15) * 4
+            ttl, protocol, source , target = struct.unpack('! 8x B B 2x 4s 4s', data[:20])
+            source = '.'.join(map(str, source))
+            target = '.'.join(map(str, target))            
+            data = data[header_length:]
+
 
             if ((protocol == 1) and (filtro == 'ICMP')):
-                icmp_type, code, checksum, data = unpackIcmpPacket(data)
-
+                icmp_type, code, checksum = struct.unpack('! B B H', data[:4])
+                data = data[4:]
+ 
                 print("  --  ICMP v4 --  ")
                 print("\tICMP type: %s" % icmp_type)
                 print("\tICMP code: %s" % code)
@@ -125,21 +149,14 @@ def main():
                 print('\tTarget: %s' % target)
                 print('')
 
-                source_port, destination_port, length, data = unpackUdpSegment(data)
-
+                source_port, destination_port, length = struct.unpack('! H H 2x H', data[:8])
+                data = data[8:]
                 print('\t  ---  UDP Segment  ---  ')
                 print('\t\tSource Port: %s' % source_port)
                 print('\t\tDestination Port: %s' % destination_port)
                 print('\t\tLength: %s' % length)
                 print('')
 
-def unpackIPv4Packet(data):
-    version_header_len = data[0]
-    version = version_header_len >> 4
-    header_len = (version_header_len & 15) * 4
-    ttl, protocol, source, target = struct.unpack('! 8x B B 2x 4s 4s', data[:20])
-
-    return version, header_len, ttl, protocol, formatIPv4(source), formatIPv4(target), data[header_len:]
 
 def nextHeader(ipv6_next_header):
     if (ipv6_next_header == 6):
@@ -181,35 +198,5 @@ def ipv6Header(data):
     data = data[40:]
 
     return data, ipv6_next_header
-
-def unpackEthernetFrame(data):
-    protocol = ""
-    IpHeader = struct.unpack("!6s6sH",data[0:14])
-    dstMac = binascii.hexlify(IpHeader[0]) 
-    srcMac = binascii.hexlify(IpHeader[1]) 
-    protoType = IpHeader[2] 
-    next_protocol = hex(protoType) 
-
-    if (next_protocol == '0x800'): 
-        protocol = 'IPV4'
-    elif (next_protocol == '0x86dd'): 
-        protocol = 'IPV6'
-
-    data = data[14:]
-
-    return dstMac, srcMac, protocol, data
-
-def unpackIcmpPacket(data):
-    icmp_type, code, checksum = struct.unpack('! B B H', data[:4])
-
-    return icmp_type, code, checksum, data[4:]
-
-def unpackUdpSegment(data):
-    source_port, destination_port, size = struct.unpack('! H H 2x H', data[:8])
-
-    return source_port, destination_port, size, data[8:]
-
-def formatIPv4(addr):
-    return '.'.join(map(str, addr))
 
 main()
